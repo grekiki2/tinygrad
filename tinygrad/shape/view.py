@@ -88,7 +88,7 @@ class View:
 
   def vars(self) -> Set[Variable]:
     flatten_mask = tuple(x for m in self.mask for x in m) if self.mask is not None else tuple()
-    return functools.reduce(operator.or_, [x.vars() for x in self.shape+self.strides+(self.offset,)+flatten_mask if isinstance(x, Node)], set())
+    return functools.reduce(operator.or_, (x.vars() for x in self.shape+self.strides+(self.offset,)+flatten_mask if isinstance(x, Node)), set())
 
   def unbind(self) -> View:
     unbound_vars:Dict[VariableOrNum,Node] = {v: v.unbind()[0] for v in self.vars() if v.val is not None}
@@ -101,27 +101,27 @@ class View:
   # MovementOps live here now
 
   def __unsafe_resize(self, arg: Tuple[Tuple[sint, sint], ...], mask=None) -> View:
-    offset = sum([s * x[0] for s, x in zip(self.strides,arg)])
+    offset = sum(s * x[0] for s, x in zip(self.strides,arg))
     if self.mask:
       # move the old mask
-      nmask = tuple([(max(0, min(mx-ax,ay-ax)), max(0, min(my-ax,ay-ax))) for (mx,my),(ax,ay) in zip(self.mask, arg)])
+      nmask = tuple((max(0, min(mx-ax,ay-ax)), max(0, min(my-ax,ay-ax))) for (mx,my),(ax,ay) in zip(self.mask, arg))
       # merge the masks if we have two
-      mask = tuple([(max(mx1, mx2), min(my1, my2)) for (mx1, my1), (mx2, my2) in zip(nmask, mask)]) if mask is not None else nmask
+      mask = tuple((max(mx1, mx2), min(my1, my2)) for (mx1, my1), (mx2, my2) in zip(nmask, mask)) if mask is not None else nmask
     shape = [y-x for x,y in arg]
     return View.create(tuple(s.b if isinstance(s, NumNode) else s for s in shape), self.strides, self.offset+offset, mask)
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
   def pad(self, arg: Tuple[Tuple[int, int], ...]) -> View:
-    assert all((b>=0 and e>=0) for b,e in arg) and len(arg) == len(self.shape)
+    assert all(b>=0 and e>=0 for b,e in arg) and len(arg) == len(self.shape)
     if any(b or e for b, e in arg):
-      zvarg = tuple([(-b,s+e) for s,(b,e) in zip(self.shape, arg)])
-      mask = tuple([(b,s+b) for s,(b,_) in zip(self.shape, arg)])
+      zvarg = tuple((-b,s+e) for s,(b,e) in zip(self.shape, arg))
+      mask = tuple((b,s+b) for s,(b,_) in zip(self.shape, arg))
       return self.__unsafe_resize(zvarg, mask=mask)
     return self
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
   def shrink(self, arg: Tuple[Tuple[sint, sint], ...]) -> View:
-    assert all((0<=b<=e<=s) for s,(b,e) in zip(self.shape,arg)) and len(arg) == len(self.shape), f"invalid shrink {arg} for {self.shape}"
+    assert all(0<=b<=e<=s for s,(b,e) in zip(self.shape,arg)) and len(arg) == len(self.shape), f"invalid shrink {arg} for {self.shape}"
     return self.__unsafe_resize(arg)
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
@@ -132,30 +132,30 @@ class View:
       return View.create(new_shape)
     assert all((s == x or (s == 1 and st == 0)) for s,x,st in zip(self.shape, new_shape, self.strides)), f"can't expand {self.shape} into {new_shape}"
     # NOTE: can the mask ever be (0,0)?
-    mask = tuple([(((0,0) if m != (0,1) else (0,ns)) if s != ns else m) for m,s,ns in zip(self.mask, self.shape, new_shape)]) if self.mask else None
+    mask = tuple((((0,0) if m != (0,1) else (0,ns)) if s != ns else m) for m,s,ns in zip(self.mask, self.shape, new_shape)) if self.mask else None
     return View.create(new_shape, self.strides, self.offset, mask)
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
   def permute(self, axis: Tuple[int, ...]) -> View:
-    assert all(isinstance(x, int) and x >= 0 and x < len(self.shape) for x in axis), f"invalid permute {axis} for {self.shape}"
-    assert len(set(axis)) == len(axis) and len(axis) == len(self.shape), f"can't permute {self.shape} with {axis}"
-    return View.create(tuple([self.shape[a] for a in axis]), tuple([self.strides[a] for a in axis]), self.offset, tuple([self.mask[a] for a in axis]) if self.mask is not None else None)
+    assert all(isinstance(x, int) and 0 <= x < len(self.shape) for x in axis), f"invalid permute {axis} for {self.shape}"
+    assert len(set(axis)) == len(axis) == len(self.shape), f"can't permute {self.shape} with {axis}"
+    return View.create(tuple(self.shape[a] for a in axis), tuple(self.strides[a] for a in axis), self.offset, tuple(self.mask[a] for a in axis) if self.mask is not None else None)
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
   def stride(self, mul: Tuple[int, ...]) -> View:
     # except for the negative case, you can build this from the others. invertible in the negative case
     assert all(isinstance(x, int) and x != 0 for x in mul), f"invalid stride {mul} for {self.shape}"
-    strides = tuple([z*m for z,m in zip(self.strides, mul)])
-    new_shape = tuple([(s+(abs(m)-1))//abs(m) for s,m in zip(self.shape, mul)])
-    offset = sum([(s-1)*z for s,z,m in zip(self.shape, self.strides, mul) if m < 0])
-    mask = tuple([(((mx if m > 0 else s-my)+(abs(m)-1))//abs(m), ((my if m > 0 else s-mx)+(abs(m)-1))//abs(m)) for (mx,my),s,m in zip(self.mask, self.shape, mul)]) if self.mask is not None else None
+    strides = tuple(z*m for z,m in zip(self.strides, mul))
+    new_shape = tuple((s+(abs(m)-1))//abs(m) for s,m in zip(self.shape, mul))
+    offset = sum((s-1)*z for s,z,m in zip(self.shape, self.strides, mul) if m < 0)
+    mask = tuple((((mx if m > 0 else s-my)+(abs(m)-1))//abs(m), ((my if m > 0 else s-mx)+(abs(m)-1))//abs(m)) for (mx,my),s,m in zip(self.mask, self.shape, mul)) if self.mask is not None else None
     return View.create(new_shape, strides, self.offset + offset, mask)
 
   @functools.lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
   def reshape(self, new_shape: Tuple[sint, ...]) -> Optional[View]:
     if self.shape == new_shape: return self
 
-    assert all(x >= 0 for x in new_shape), f"shape can't contain negative numbers {new_shape}"
+    assert 0 <= min(new_shape), f"shape can't contain negative numbers {new_shape}"
     if 0 in self.shape:
       assert 0 in new_shape, f"cannot reshape 0 size to {new_shape}"
       return View.create(new_shape)
@@ -178,9 +178,9 @@ class View:
         new_stride *= (new_dim if (acc :=  acc * new_dim) < real_dim else 0)
       if acc != merged_dim: break
     else:
-      strides += [0,] * (len(new_shape) - len(strides))
+      strides += [0] * (len(new_shape) - len(strides))
       mask, off_mask, extra = _reshape_mask(self, new_shape)
-      total_offset = sum([off * s for off, s in zip(off_mask, strides)]) if off_mask else 0
+      total_offset = sum(off * s for off, s in zip(off_mask, strides)) if off_mask else 0
       if not extra: return View.create(new_shape, tuple(reversed(strides)), self.offset - total_offset, mask)
 
     return None
