@@ -155,7 +155,7 @@ class View:
   def reshape(self, new_shape: Tuple[sint, ...]) -> Optional[View]:
     if self.shape == new_shape: return self
 
-    assert 0 <= min(new_shape), f"shape can't contain negative numbers {new_shape}"
+    assert all(x >= 0 for x in new_shape), f"shape can't contain negative numbers {new_shape}"
     if 0 in self.shape:
       assert 0 in new_shape, f"cannot reshape 0 size to {new_shape}"
       return View.create(new_shape)
